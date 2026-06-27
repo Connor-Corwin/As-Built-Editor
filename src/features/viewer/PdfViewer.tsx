@@ -126,6 +126,7 @@ export function PdfViewer({ documentId }: Props) {
         task = render.task;
         await render.task.promise;
         if (!cancelled) {
+          render.commit(); // swap the finished image in (no white flash)
           setSize({ width: render.width, height: render.height });
           setEffScale(eff);
         }

@@ -39,6 +39,13 @@ export async function getPdfPageCount(
 export interface PageRender {
   /** The in-flight render task; await `.promise`, call `.cancel()` to abort. */
   task: RenderTask;
+  /**
+   * Swap the freshly rendered (offscreen) image onto the visible canvas. Call
+   * this only after `task.promise` resolves and the render wasn't superseded —
+   * it's what keeps the old frame visible until the new one is ready (no white
+   * flash during zoom).
+   */
+  commit: () => void;
   /** CSS width of the rendered page in pixels (at the given scale). */
   width: number;
   /** CSS height of the rendered page in pixels (at the given scale). */
@@ -55,10 +62,11 @@ export function isRenderCancelled(err: unknown): boolean {
 }
 
 /**
- * Start rendering a single page into a canvas at `scale`, accounting for
- * device pixel ratio so output stays crisp on HiDPI displays. Returns the
- * render task (so callers can cancel a superseded render) plus the CSS
- * dimensions the canvas was sized to (used to align the Konva overlay).
+ * Render a single page at `scale` into an OFFSCREEN canvas, accounting for
+ * device pixel ratio so output stays crisp on HiDPI displays. The visible
+ * `canvas` is left untouched until the caller invokes `commit()` — so the
+ * previous frame stays on screen during the (async) re-render instead of
+ * flashing white. Returns the render task plus the CSS dimensions.
  */
 export async function renderPageToCanvas(
   pdf: PDFDocumentProxy,
@@ -72,13 +80,13 @@ export async function renderPageToCanvas(
 
   const cssWidth = Math.floor(viewport.width);
   const cssHeight = Math.floor(viewport.height);
+  const pxWidth = Math.floor(viewport.width * dpr);
+  const pxHeight = Math.floor(viewport.height * dpr);
 
-  canvas.width = Math.floor(viewport.width * dpr);
-  canvas.height = Math.floor(viewport.height * dpr);
-  canvas.style.width = `${cssWidth}px`;
-  canvas.style.height = `${cssHeight}px`;
-
-  const context = canvas.getContext('2d');
+  const off = document.createElement('canvas');
+  off.width = pxWidth;
+  off.height = pxHeight;
+  const context = off.getContext('2d');
   if (!context) throw new Error('Could not get 2D canvas context');
 
   const task = page.render({
@@ -87,7 +95,15 @@ export async function renderPageToCanvas(
     transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
   });
 
-  return { task, width: cssWidth, height: cssHeight };
+  const commit = () => {
+    canvas.width = pxWidth;
+    canvas.height = pxHeight;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+    canvas.getContext('2d')?.drawImage(off, 0, 0);
+  };
+
+  return { task, commit, width: cssWidth, height: cssHeight };
 }
 
 /** Natural (unscaled) page dimensions, used to compute fit/fill scales. */
