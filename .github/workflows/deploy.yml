@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ['claude/avl-asbuilt-modernizer-gzo6bh']
+    branches: ['main']
   workflow_dispatch:
 
 # Permissions the GITHUB_TOKEN needs to publish to Pages.
