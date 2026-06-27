@@ -2,6 +2,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ProjectSection } from './ProjectSection';
 import { DrawingsSection } from './DrawingsSection';
+import { RacksSection } from './RacksSection';
 
 interface Props {
   projectId: string;
@@ -35,7 +36,10 @@ export function RightDrawer({ projectId }: Props) {
           <CollapsibleSection title="Drawings">
             <DrawingsSection projectId={projectId} />
           </CollapsibleSection>
-          {/* Future: Racks, Connections, Labels sections go here. */}
+          <CollapsibleSection title="Racks">
+            <RacksSection projectId={projectId} />
+          </CollapsibleSection>
+          {/* Future: Connections, Labels sections go here. */}
         </aside>
       )}
     </div>
