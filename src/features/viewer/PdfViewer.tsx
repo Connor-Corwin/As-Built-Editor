@@ -64,9 +64,20 @@ export function PdfViewer({ documentId }: Props) {
   const [searching, setSearching] = useState(false);
   const [hasText, setHasText] = useState(true);
   const [highlights, setHighlights] = useState<HighlightRect[]>([]);
+  // Set when a match should be scrolled into view after the next render.
+  const wantScrollRef = useRef(false);
 
   const numPages = pdf?.numPages ?? 0;
   const pageNum = Math.min(Math.max(1, page), numPages || 1);
+
+  // Which highlight rect on the current page is the active match. Highlights and
+  // hits are both enumerated in text-item order, so the active hit's position
+  // among same-page hits indexes directly into the page's highlight rects.
+  const activeHitPage = hits[activeHit]?.page;
+  const activeRectIndex =
+    activeHitPage === pageNum
+      ? hits.slice(0, activeHit).filter((h) => h.page === pageNum).length
+      : -1;
 
   // Measure the scroll area (and react to drawer open/close, window resize).
   useLayoutEffect(() => {
@@ -141,6 +152,25 @@ export function PdfViewer({ documentId }: Props) {
     };
   }, [pdf, pageNum, term, effScale]);
 
+  // After navigating/zooming to a match, center it in the scroll area.
+  useEffect(() => {
+    if (!wantScrollRef.current) return;
+    const el = scrollRef.current;
+    const canvas = canvasRef.current;
+    const rect = highlights[activeRectIndex];
+    if (!el || !canvas || !rect) return;
+    wantScrollRef.current = false;
+    const cont = el.getBoundingClientRect();
+    const cv = canvas.getBoundingClientRect();
+    const centerX = cv.left - cont.left + el.scrollLeft + rect.x + rect.width / 2;
+    const centerY = cv.top - cont.top + el.scrollTop + rect.y + rect.height / 2;
+    el.scrollTo({
+      left: centerX - el.clientWidth / 2,
+      top: centerY - el.clientHeight / 2,
+      behavior: 'smooth',
+    });
+  }, [highlights, activeRectIndex]);
+
   async function runSearch() {
     if (!pdf) return;
     const q = searchInput.trim();
@@ -155,7 +185,10 @@ export function PdfViewer({ documentId }: Props) {
       setHits(found);
       setHasText(totalTextItems > 0);
       setActiveHit(0);
-      if (found.length) setPage(found[0].page);
+      if (found.length) {
+        wantScrollRef.current = true;
+        setPage(found[0].page);
+      }
     } finally {
       setSearching(false);
     }
@@ -173,7 +206,16 @@ export function PdfViewer({ documentId }: Props) {
     if (hits.length === 0) return;
     const next = (activeHit + delta + hits.length) % hits.length;
     setActiveHit(next);
+    wantScrollRef.current = true;
     setPage(hits[next].page);
+  }
+
+  /** Zoom in on the active match and center it. */
+  function zoomToMatch() {
+    if (hits.length === 0) return;
+    wantScrollRef.current = true;
+    // Jump to a readable zoom (never zoom out from the current level).
+    setScale(Math.max(effScale * 2, 2));
   }
 
   const zoomDisabled = loading || !pdf;
@@ -272,6 +314,14 @@ export function PdfViewer({ documentId }: Props) {
               <Button variant="ghost" onClick={() => stepHit(1)} disabled={!hits.length}>
                 ›
               </Button>
+              <Button
+                variant="secondary"
+                onClick={zoomToMatch}
+                disabled={!hits.length}
+                title="Zoom in on this match"
+              >
+                🔍+
+              </Button>
               <Button variant="ghost" onClick={clearSearch} title="Clear search">
                 ✕
               </Button>
@@ -312,6 +362,7 @@ export function PdfViewer({ documentId }: Props) {
                 width={size.width}
                 height={size.height}
                 highlights={highlights}
+                activeIndex={activeRectIndex}
               />
             )}
           </div>

@@ -6,6 +6,8 @@ interface Props {
   height: number;
   /** Search-match rectangles to highlight, in CSS pixels at the page scale. */
   highlights?: HighlightRect[];
+  /** Index within `highlights` of the currently focused match (styled stronger). */
+  activeIndex?: number;
 }
 
 /**
@@ -16,25 +18,33 @@ interface Props {
  * draggable racks, connection callouts, and labels here — pixel-aligned with
  * the drawing — without restructuring the viewer.
  */
-export function OverlayLayer({ width, height, highlights = [] }: Props) {
+export function OverlayLayer({
+  width,
+  height,
+  highlights = [],
+  activeIndex = -1,
+}: Props) {
   return (
     <div className="pointer-events-none absolute inset-0" style={{ width, height }}>
       <Stage width={width} height={height}>
         <Layer>
-          {highlights.map((r, i) => (
-            <Rect
-              key={i}
-              x={r.x}
-              y={r.y}
-              width={r.width}
-              height={r.height}
-              fill="#facc15"
-              opacity={0.4}
-              stroke="#ca8a04"
-              strokeWidth={1}
-              cornerRadius={2}
-            />
-          ))}
+          {highlights.map((r, i) => {
+            const active = i === activeIndex;
+            return (
+              <Rect
+                key={i}
+                x={r.x}
+                y={r.y}
+                width={r.width}
+                height={r.height}
+                fill={active ? '#f97316' : '#facc15'}
+                opacity={active ? 0.55 : 0.4}
+                stroke={active ? '#c2410c' : '#ca8a04'}
+                strokeWidth={active ? 2 : 1}
+                cornerRadius={2}
+              />
+            );
+          })}
         </Layer>
       </Stage>
     </div>
