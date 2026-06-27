@@ -89,3 +89,97 @@ export async function renderPageToCanvas(
 
   return { task, width: cssWidth, height: cssHeight };
 }
+
+/** Natural (unscaled) page dimensions, used to compute fit/fill scales. */
+export async function getPageBaseSize(
+  pdf: PDFDocumentProxy,
+  pageNumber: number,
+): Promise<{ width: number; height: number }> {
+  const page = await pdf.getPage(pageNumber);
+  const v = page.getViewport({ scale: 1 });
+  return { width: v.width, height: v.height };
+}
+
+export interface SearchHit {
+  page: number;
+  /** The text of the matching item (a label/cell/word on the drawing). */
+  text: string;
+}
+
+export interface SearchResult {
+  hits: SearchHit[];
+  /** Total text items across the document — 0 means a scanned/no-text PDF. */
+  totalTextItems: number;
+}
+
+/**
+ * Search every page's text layer for `term` (case-insensitive), matching per
+ * text item so results map to individual labels/cells on the drawing. Scanned
+ * pages have no text layer, so `totalTextItems` reports whether search is even
+ * possible for this document.
+ */
+export async function searchDocument(
+  pdf: PDFDocumentProxy,
+  term: string,
+): Promise<SearchResult> {
+  const needle = term.trim().toLowerCase();
+  const hits: SearchHit[] = [];
+  let totalTextItems = 0;
+  if (!needle) return { hits, totalTextItems };
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    for (const item of content.items) {
+      if (!('str' in item)) continue;
+      totalTextItems++;
+      if (item.str.toLowerCase().includes(needle)) {
+        hits.push({ page: p, text: item.str });
+      }
+    }
+  }
+  return { hits, totalTextItems };
+}
+
+export interface HighlightRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Rectangles (in CSS pixels at `scale`) around every text item on `pageNumber`
+ * that contains `term`. Aligned to the rendered canvas, so the Konva overlay
+ * can draw highlights directly on top.
+ */
+export async function getPageHighlights(
+  pdf: PDFDocumentProxy,
+  pageNumber: number,
+  term: string,
+  scale: number,
+): Promise<HighlightRect[]> {
+  const needle = term.trim().toLowerCase();
+  if (!needle) return [];
+
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({ scale });
+  const content = await page.getTextContent();
+  const rects: HighlightRect[] = [];
+
+  for (const item of content.items) {
+    if (!('str' in item) || !item.str.toLowerCase().includes(needle)) continue;
+    // Map the item's text-space transform into viewport (CSS) space.
+    const tx = pdfjs.Util.transform(viewport.transform, item.transform);
+    const fontHeight = Math.hypot(tx[2], tx[3]);
+    const width = item.width * scale;
+    const pad = 2;
+    rects.push({
+      x: tx[4] - pad,
+      y: tx[5] - fontHeight - pad,
+      width: width + pad * 2,
+      height: fontHeight + pad * 2,
+    });
+  }
+  return rects;
+}

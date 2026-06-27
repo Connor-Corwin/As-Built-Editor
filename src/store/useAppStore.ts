@@ -1,9 +1,12 @@
 import { create } from 'zustand';
 
+/** How the page is sized to the viewport. */
+export type FitMode = 'none' | 'fit' | 'fill';
+
 /**
  * Transient app/UI state. The single source of truth for the page transform
- * (scale) lives here so the PDF canvas and the Konva overlay stay aligned.
- * Durable data lives in IndexedDB (see db/repository.ts).
+ * (scale + fit mode) lives here so the PDF canvas and the Konva overlay stay
+ * aligned. Durable data lives in IndexedDB (see db/repository.ts).
  */
 interface AppState {
   /** Currently opened project, or null for the project list / home view. */
@@ -12,8 +15,12 @@ interface AppState {
   currentDocumentId: string | null;
   /** 1-based page number being viewed. */
   page: number;
-  /** Render scale (zoom). 1 = 100%. */
+  /** Manual render scale (zoom). 1 = 100%. Used when fitMode === 'none'. */
   scale: number;
+  /** Auto-sizing mode: fit whole page, fill width, or manual zoom. */
+  fitMode: FitMode;
+  /** Whether the right-hand tools drawer is open. */
+  rightDrawerOpen: boolean;
 
   openProject: (projectId: string) => void;
   closeProject: () => void;
@@ -22,6 +29,9 @@ interface AppState {
   zoomIn: () => void;
   zoomOut: () => void;
   setScale: (scale: number) => void;
+  setFitMode: (mode: FitMode) => void;
+  toggleRightDrawer: () => void;
+  setRightDrawerOpen: (open: boolean) => void;
 }
 
 const MIN_SCALE = 0.25;
@@ -33,17 +43,32 @@ export const useAppStore = create<AppState>((set) => ({
   currentDocumentId: null,
   page: 1,
   scale: 1,
+  fitMode: 'fit',
+  rightDrawerOpen: true,
 
   openProject: (projectId) =>
-    set({ currentProjectId: projectId, currentDocumentId: null, page: 1, scale: 1 }),
+    set({
+      currentProjectId: projectId,
+      currentDocumentId: null,
+      page: 1,
+      scale: 1,
+      fitMode: 'fit',
+    }),
   closeProject: () =>
     set({ currentProjectId: null, currentDocumentId: null, page: 1, scale: 1 }),
   selectDocument: (documentId) =>
     set({ currentDocumentId: documentId, page: 1 }),
   setPage: (page) => set({ page: Math.max(1, page) }),
-  zoomIn: () => set((s) => ({ scale: clampScale(s.scale * 1.25) })),
-  zoomOut: () => set((s) => ({ scale: clampScale(s.scale / 1.25) })),
-  setScale: (scale) => set({ scale: clampScale(scale) }),
+  // Manual zoom takes over from any active fit mode.
+  zoomIn: () =>
+    set((s) => ({ scale: clampScale(s.scale * 1.25), fitMode: 'none' })),
+  zoomOut: () =>
+    set((s) => ({ scale: clampScale(s.scale / 1.25), fitMode: 'none' })),
+  setScale: (scale) => set({ scale: clampScale(scale), fitMode: 'none' }),
+  setFitMode: (fitMode) => set({ fitMode }),
+  toggleRightDrawer: () =>
+    set((s) => ({ rightDrawerOpen: !s.rightDrawerOpen })),
+  setRightDrawerOpen: (rightDrawerOpen) => set({ rightDrawerOpen }),
 }));
 
 export { MIN_SCALE, MAX_SCALE };

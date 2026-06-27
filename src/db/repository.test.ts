@@ -66,12 +66,20 @@ describe('project CRUD', () => {
   });
 
   it('lists projects most-recently-updated first', async () => {
-    const a = await createProject('A');
-    const b = await createProject('B');
-    // Make A the most recently updated.
-    await renameProject(a.id, 'A2');
-    const list = await listProjects();
-    expect(list.map((p) => p.id)).toEqual([a.id, b.id]);
+    // Force strictly increasing timestamps so ordering is deterministic
+    // (real Date.now() can collide within a millisecond on fast machines).
+    let t = 1000;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => t++);
+    try {
+      const a = await createProject('A');
+      const b = await createProject('B');
+      // Make A the most recently updated.
+      await renameProject(a.id, 'A2');
+      const list = await listProjects();
+      expect(list.map((p) => p.id)).toEqual([a.id, b.id]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

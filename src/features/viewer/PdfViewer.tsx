@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { useAppStore } from '../../store/useAppStore';
-import { isRenderCancelled, renderPageToCanvas } from '../../lib/pdf';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useAppStore, type FitMode } from '../../store/useAppStore';
+import {
+  getPageBaseSize,
+  getPageHighlights,
+  isRenderCancelled,
+  renderPageToCanvas,
+  searchDocument,
+  type HighlightRect,
+  type SearchHit,
+} from '../../lib/pdf';
 import { Button } from '../../components/Button';
 import { usePdfDocument } from './usePdfDocument';
 import { OverlayLayer } from './OverlayLayer';
@@ -9,48 +17,102 @@ interface Props {
   documentId: string;
 }
 
+const PADDING = 48; // matches the p-6 scroll-area padding (24px * 2)
+
+function computeScale(
+  mode: FitMode,
+  manual: number,
+  base: { width: number; height: number },
+  cw: number,
+  ch: number,
+): number {
+  if (mode === 'none' || base.width <= 0 || base.height <= 0) return manual;
+  const availW = Math.max(cw - PADDING, 50);
+  const availH = Math.max(ch - PADDING, 50);
+  const scale =
+    mode === 'fill'
+      ? availW / base.width
+      : Math.min(availW / base.width, availH / base.height);
+  return Math.min(Math.max(scale, 0.05), 8);
+}
+
 /**
- * Renders the selected PDF page to a canvas with page navigation and
- * zoom, and lays the (scaffolded) Konva overlay on top, aligned to the
- * rendered page dimensions.
+ * Renders the selected PDF page with page navigation, zoom, fit/fill sizing,
+ * and full-text search with on-page highlights (drawn on the Konva overlay).
  */
 export function PdfViewer({ documentId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { pdf, fileName, loading, error } = usePdfDocument(documentId);
 
   const page = useAppStore((s) => s.page);
   const scale = useAppStore((s) => s.scale);
+  const fitMode = useAppStore((s) => s.fitMode);
   const setPage = useAppStore((s) => s.setPage);
-  const zoomIn = useAppStore((s) => s.zoomIn);
-  const zoomOut = useAppStore((s) => s.zoomOut);
   const setScale = useAppStore((s) => s.setScale);
+  const setFitMode = useAppStore((s) => s.setFitMode);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const numPages = pdf?.numPages ?? 0;
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [effScale, setEffScale] = useState(1);
 
-  // Clamp page if a different (shorter) document is selected.
+  // Search state.
+  const [searchInput, setSearchInput] = useState('');
+  const [term, setTerm] = useState('');
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [activeHit, setActiveHit] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [hasText, setHasText] = useState(true);
+  const [highlights, setHighlights] = useState<HighlightRect[]>([]);
+
+  const numPages = pdf?.numPages ?? 0;
+  const pageNum = Math.min(Math.max(1, page), numPages || 1);
+
+  // Measure the scroll area (and react to drawer open/close, window resize).
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () =>
+      setContainerSize({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Clamp page if a shorter document is selected.
   useEffect(() => {
     if (numPages > 0 && page > numPages) setPage(numPages);
   }, [numPages, page, setPage]);
 
-  // Render whenever the doc, page, or scale changes. A superseded render is
-  // cancelled so it neither paints stale content nor logs noise.
+  // Render whenever doc, page, sizing, or container size changes. A superseded
+  // render is cancelled so it neither paints stale content nor logs noise.
   useEffect(() => {
     if (!pdf || !canvasRef.current) return;
     let cancelled = false;
     let task: { cancel: () => void } | null = null;
-    const pageNum = Math.min(Math.max(1, page), pdf.numPages);
     (async () => {
       try {
+        const base = await getPageBaseSize(pdf, pageNum);
+        const eff = computeScale(
+          fitMode,
+          scale,
+          base,
+          containerSize.width,
+          containerSize.height,
+        );
         const render = await renderPageToCanvas(
           pdf,
           pageNum,
-          scale,
+          eff,
           canvasRef.current!,
         );
         task = render.task;
         await render.task.promise;
-        if (!cancelled) setSize({ width: render.width, height: render.height });
+        if (!cancelled) {
+          setSize({ width: render.width, height: render.height });
+          setEffScale(eff);
+        }
       } catch (err) {
         if (!cancelled && !isRenderCancelled(err)) {
           console.error('PDF render failed', err);
@@ -61,58 +123,174 @@ export function PdfViewer({ documentId }: Props) {
       cancelled = true;
       task?.cancel();
     };
-  }, [pdf, page, scale]);
+  }, [pdf, pageNum, fitMode, scale, containerSize.width, containerSize.height]);
+
+  // Recompute search highlights for the current page/scale.
+  useEffect(() => {
+    if (!pdf || !term) {
+      setHighlights([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const rects = await getPageHighlights(pdf, pageNum, term, effScale);
+      if (!cancelled) setHighlights(rects);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdf, pageNum, term, effScale]);
+
+  async function runSearch() {
+    if (!pdf) return;
+    const q = searchInput.trim();
+    if (!q) {
+      clearSearch();
+      return;
+    }
+    setSearching(true);
+    try {
+      const { hits: found, totalTextItems } = await searchDocument(pdf, q);
+      setTerm(q);
+      setHits(found);
+      setHasText(totalTextItems > 0);
+      setActiveHit(0);
+      if (found.length) setPage(found[0].page);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function clearSearch() {
+    setSearchInput('');
+    setTerm('');
+    setHits([]);
+    setHighlights([]);
+    setHasText(true);
+  }
+
+  function stepHit(delta: number) {
+    if (hits.length === 0) return;
+    const next = (activeHit + delta + hits.length) % hits.length;
+    setActiveHit(next);
+    setPage(hits[next].page);
+  }
+
+  const zoomDisabled = loading || !pdf;
 
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-4 py-2">
-        <span className="mr-2 truncate text-sm font-medium text-slate-600">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 bg-white px-4 py-2">
+        <span className="mr-1 max-w-[12rem] truncate text-sm font-medium text-slate-600">
           {fileName ?? 'Document'}
         </span>
 
+        {/* Page nav */}
         <div className="flex items-center gap-1">
           <Button
             variant="secondary"
             onClick={() => setPage(page - 1)}
-            disabled={loading || page <= 1}
+            disabled={zoomDisabled || pageNum <= 1}
           >
-            ‹ Prev
+            ‹
           </Button>
           <span className="px-1 text-sm tabular-nums text-slate-600">
-            {numPages ? `${Math.min(page, numPages)} / ${numPages}` : '—'}
+            {numPages ? `${pageNum} / ${numPages}` : '—'}
           </span>
           <Button
             variant="secondary"
             onClick={() => setPage(page + 1)}
-            disabled={loading || page >= numPages}
+            disabled={zoomDisabled || pageNum >= numPages}
           >
-            Next ›
+            ›
           </Button>
         </div>
 
-        <div className="ml-2 flex items-center gap-1">
-          <Button variant="secondary" onClick={zoomOut} disabled={loading}>
+        {/* Zoom */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="secondary"
+            onClick={() => setScale(effScale / 1.25)}
+            disabled={zoomDisabled}
+          >
             −
           </Button>
           <span className="w-12 text-center text-sm tabular-nums text-slate-600">
-            {Math.round(scale * 100)}%
+            {Math.round(effScale * 100)}%
           </span>
-          <Button variant="secondary" onClick={zoomIn} disabled={loading}>
+          <Button
+            variant="secondary"
+            onClick={() => setScale(effScale * 1.25)}
+            disabled={zoomDisabled}
+          >
             +
           </Button>
+        </div>
+
+        {/* Fit / Fill */}
+        <div className="flex items-center gap-1">
           <Button
-            variant="ghost"
-            onClick={() => setScale(1)}
-            disabled={loading}
+            variant={fitMode === 'fit' ? 'primary' : 'secondary'}
+            onClick={() => setFitMode('fit')}
+            disabled={zoomDisabled}
+            title="Scale the whole page to fit"
           >
-            Reset
+            Fit
           </Button>
+          <Button
+            variant={fitMode === 'fill' ? 'primary' : 'secondary'}
+            onClick={() => setFitMode('fill')}
+            disabled={zoomDisabled}
+            title="Scale to fill the width"
+          >
+            Fill
+          </Button>
+        </div>
+
+        {/* Search */}
+        <div className="ml-auto flex items-center gap-1">
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+            placeholder="Search drawing…"
+            disabled={zoomDisabled}
+            className="w-44 rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          />
+          <Button variant="secondary" onClick={runSearch} disabled={zoomDisabled}>
+            {searching ? '…' : 'Find'}
+          </Button>
+          {term && (
+            <>
+              <Button variant="ghost" onClick={() => stepHit(-1)} disabled={!hits.length}>
+                ‹
+              </Button>
+              <span className="text-xs tabular-nums text-slate-500">
+                {hits.length ? `${activeHit + 1}/${hits.length}` : '0'}
+              </span>
+              <Button variant="ghost" onClick={() => stepHit(1)} disabled={!hits.length}>
+                ›
+              </Button>
+              <Button variant="ghost" onClick={clearSearch} title="Clear search">
+                ✕
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
+      {/* Search status line */}
+      {term && !searching && hits.length === 0 && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-700">
+          {hasText
+            ? `No matches for “${term}”.`
+            : `No text found — this looks like a scanned drawing. OCR search is a planned feature.`}
+        </div>
+      )}
+
       {/* Scroll/pan area */}
-      <div className="relative flex-1 overflow-auto bg-slate-200 p-6">
+      <div ref={scrollRef} className="relative flex-1 overflow-auto bg-slate-200 p-6">
         {error && (
           <div className="mx-auto mt-10 max-w-md rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
@@ -130,7 +308,11 @@ export function PdfViewer({ documentId }: Props) {
           >
             <canvas ref={canvasRef} className="block bg-white" />
             {size.width > 0 && (
-              <OverlayLayer width={size.width} height={size.height} />
+              <OverlayLayer
+                width={size.width}
+                height={size.height}
+                highlights={highlights}
+              />
             )}
           </div>
         )}
