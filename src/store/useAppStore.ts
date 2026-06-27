@@ -35,7 +35,7 @@ interface AppState {
 }
 
 const MIN_SCALE = 0.25;
-const MAX_SCALE = 4;
+const MAX_SCALE = 8;
 const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 
 export const useAppStore = create<AppState>((set) => ({

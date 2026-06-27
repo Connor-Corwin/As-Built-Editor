@@ -12,6 +12,7 @@ import {
 import { Button } from '../../components/Button';
 import { usePdfDocument } from './usePdfDocument';
 import { OverlayLayer } from './OverlayLayer';
+import { useGestureZoom } from './useGestureZoom';
 
 interface Props {
   documentId: string;
@@ -90,6 +91,10 @@ export function PdfViewer({ documentId }: Props) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Pinch / ctrl+wheel zoom that re-renders the page sharp (keeps it crisp on
+  // touch devices instead of the browser blur-stretching the bitmap).
+  useGestureZoom({ scrollRef, canvasRef, scale: effScale, onScaleChange: setScale });
 
   // Clamp page if a shorter document is selected.
   useEffect(() => {
@@ -340,7 +345,12 @@ export function PdfViewer({ documentId }: Props) {
       )}
 
       {/* Scroll/pan area */}
-      <div ref={scrollRef} className="relative flex-1 overflow-auto bg-slate-200 p-6">
+      <div
+        ref={scrollRef}
+        className="relative flex-1 overflow-auto bg-slate-200 p-6"
+        // Allow one-finger panning but let us handle two-finger pinch.
+        style={{ touchAction: 'pan-x pan-y' }}
+      >
         {error && (
           <div className="mx-auto mt-10 max-w-md rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
