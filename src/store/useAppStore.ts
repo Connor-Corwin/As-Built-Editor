@@ -28,6 +28,10 @@ interface AppState {
   fitMode: FitMode;
   /** Whether the right-hand tools drawer is open. */
   rightDrawerOpen: boolean;
+  /** When true, clicking the drawing draws/edits connection lines. */
+  connectionMode: boolean;
+  /** Currently selected connection (for editing/highlighting). */
+  selectedConnectionId: string | null;
 
   openProject: (projectId: string) => void;
   closeProject: () => void;
@@ -40,6 +44,9 @@ interface AppState {
   setFitMode: (mode: FitMode) => void;
   toggleRightDrawer: () => void;
   setRightDrawerOpen: (open: boolean) => void;
+  toggleConnectionMode: () => void;
+  setConnectionMode: (on: boolean) => void;
+  setSelectedConnection: (id: string | null) => void;
 }
 
 const MIN_SCALE = 0.25;
@@ -55,6 +62,8 @@ export const useAppStore = create<AppState>((set) => ({
   scale: 1,
   fitMode: 'fit',
   rightDrawerOpen: true,
+  connectionMode: false,
+  selectedConnectionId: null,
 
   openProject: (projectId) =>
     set({
@@ -65,6 +74,8 @@ export const useAppStore = create<AppState>((set) => ({
       page: 1,
       scale: 1,
       fitMode: 'fit',
+      connectionMode: false,
+      selectedConnectionId: null,
     }),
   closeProject: () =>
     set({
@@ -89,6 +100,11 @@ export const useAppStore = create<AppState>((set) => ({
   toggleRightDrawer: () =>
     set((s) => ({ rightDrawerOpen: !s.rightDrawerOpen })),
   setRightDrawerOpen: (rightDrawerOpen) => set({ rightDrawerOpen }),
+  toggleConnectionMode: () =>
+    set((s) => ({ connectionMode: !s.connectionMode })),
+  setConnectionMode: (connectionMode) => set({ connectionMode }),
+  setSelectedConnection: (selectedConnectionId) =>
+    set({ selectedConnectionId }),
 }));
 
 export { MIN_SCALE, MAX_SCALE };

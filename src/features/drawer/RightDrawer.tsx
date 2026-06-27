@@ -3,6 +3,7 @@ import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ProjectSection } from './ProjectSection';
 import { DrawingsSection } from './DrawingsSection';
 import { RacksSection } from './RacksSection';
+import { ConnectionsSection } from './ConnectionsSection';
 
 interface Props {
   projectId: string;
@@ -39,7 +40,10 @@ export function RightDrawer({ projectId }: Props) {
           <CollapsibleSection title="Racks">
             <RacksSection projectId={projectId} />
           </CollapsibleSection>
-          {/* Future: Connections, Labels sections go here. */}
+          <CollapsibleSection title="Connections">
+            <ConnectionsSection projectId={projectId} />
+          </CollapsibleSection>
+          {/* Future: Labels section goes here. */}
         </aside>
       )}
     </div>

@@ -66,16 +66,33 @@ export type SignalType =
   | 'power'
   | 'other';
 
-/** A cable/signal connection between two device ports. */
+/**
+ * A cable/signal connection between two endpoints. An endpoint is either a rack
+ * device (`fromDeviceId`/`toDeviceId` → RackEquipment) or free text
+ * (`fromLabel`/`toLabel`) for things not in a rack (displays, speakers, plates).
+ *
+ * Optionally drawn on a drawing: when `documentId`/`page` and the `x1..y2`
+ * coordinates (normalized 0..1, so they survive zoom) are set, the connection
+ * renders as a line on that page.
+ */
 export interface Connection {
   id: Id;
   projectId: Id;
   fromDeviceId?: Id;
+  fromLabel?: string;
   fromPort?: string;
   toDeviceId?: Id;
+  toLabel?: string;
   toPort?: string;
   signalType: SignalType;
   cableLabel?: string;
+  // Optional geometry for the line drawn on a drawing.
+  documentId?: Id;
+  page?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
 }
 
 export type AnnotationKind = 'label' | 'rack' | 'connection' | 'note';

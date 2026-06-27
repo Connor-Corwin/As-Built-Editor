@@ -1,5 +1,6 @@
 import { db, newId } from './db';
 import type {
+  Connection,
   PdfDocument,
   Project,
   Rack,
@@ -184,4 +185,50 @@ export async function updateEquipment(
 
 export async function deleteEquipment(id: string): Promise<void> {
   await db.equipment.delete(id);
+}
+
+/** All equipment across a project's racks, with the owning rack's name. */
+export async function listProjectDevices(
+  projectId: string,
+): Promise<Array<{ id: string; label: string; rackName: string }>> {
+  const racks = await listRacks(projectId);
+  const byId = new Map(racks.map((r) => [r.id, r.name]));
+  const rackIds = racks.map((r) => r.id);
+  if (rackIds.length === 0) return [];
+  const equipment = await db.equipment
+    .where('rackId')
+    .anyOf(rackIds)
+    .toArray();
+  return equipment.map((e) => ({
+    id: e.id,
+    label: e.label,
+    rackName: byId.get(e.rackId) ?? '',
+  }));
+}
+
+// ---- Connections ----------------------------------------------------------
+
+export async function createConnection(
+  projectId: string,
+  data: Omit<Connection, 'id' | 'projectId'>,
+): Promise<Connection> {
+  const connection: Connection = { id: newId(), projectId, ...data };
+  await db.connections.add(connection);
+  await touchProject(projectId);
+  return connection;
+}
+
+export function listConnections(projectId: string): Promise<Connection[]> {
+  return db.connections.where('projectId').equals(projectId).toArray();
+}
+
+export async function updateConnection(
+  id: string,
+  changes: Partial<Omit<Connection, 'id' | 'projectId'>>,
+): Promise<void> {
+  await db.connections.update(id, changes);
+}
+
+export async function deleteConnection(id: string): Promise<void> {
+  await db.connections.delete(id);
 }

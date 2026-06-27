@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useAppStore, type FitMode } from '../../store/useAppStore';
 import {
   getPageBaseSize,
@@ -9,6 +10,7 @@ import {
   type HighlightRect,
   type SearchHit,
 } from '../../lib/pdf';
+import { createConnection, listConnections } from '../../db/repository';
 import { Button } from '../../components/Button';
 import { usePdfDocument } from './usePdfDocument';
 import { OverlayLayer } from './OverlayLayer';
@@ -52,6 +54,11 @@ export function PdfViewer({ documentId }: Props) {
   const setPage = useAppStore((s) => s.setPage);
   const setScale = useAppStore((s) => s.setScale);
   const setFitMode = useAppStore((s) => s.setFitMode);
+  const projectId = useAppStore((s) => s.currentProjectId);
+  const connectionMode = useAppStore((s) => s.connectionMode);
+  const toggleConnectionMode = useAppStore((s) => s.toggleConnectionMode);
+  const selectedConnectionId = useAppStore((s) => s.selectedConnectionId);
+  const setSelectedConnection = useAppStore((s) => s.setSelectedConnection);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -68,8 +75,47 @@ export function PdfViewer({ documentId }: Props) {
   // Set when a match should be scrolled into view after the next render.
   const wantScrollRef = useRef(false);
 
+  // Connection drawing: first placed point awaiting its pair.
+  const [pendingStart, setPendingStart] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
   const numPages = pdf?.numPages ?? 0;
   const pageNum = Math.min(Math.max(1, page), numPages || 1);
+
+  // Connections drawn on the current document + page.
+  const connections = useLiveQuery(
+    () => (projectId ? listConnections(projectId) : Promise.resolve([])),
+    [projectId],
+    [],
+  );
+  const pageConnections = connections.filter(
+    (c) => c.documentId === documentId && c.page === pageNum && c.x1 != null,
+  );
+
+  async function placePoint(nx: number, ny: number) {
+    if (!projectId) return;
+    if (!pendingStart) {
+      setPendingStart({ x: nx, y: ny });
+      return;
+    }
+    const conn = await createConnection(projectId, {
+      signalType: 'video',
+      documentId,
+      page: pageNum,
+      x1: pendingStart.x,
+      y1: pendingStart.y,
+      x2: nx,
+      y2: ny,
+    });
+    setPendingStart(null);
+    setSelectedConnection(conn.id);
+  }
+
+  // Leaving connection mode clears any half-drawn line.
+  useEffect(() => {
+    if (!connectionMode) setPendingStart(null);
+  }, [connectionMode]);
 
   // Which highlight rect on the current page is the active match. Highlights and
   // hits are both enumerated in text-item order, so the active hit's position
@@ -296,6 +342,16 @@ export function PdfViewer({ documentId }: Props) {
           </Button>
         </div>
 
+        {/* Connections */}
+        <Button
+          variant={connectionMode ? 'primary' : 'secondary'}
+          onClick={toggleConnectionMode}
+          disabled={zoomDisabled}
+          title="Draw connection lines on the drawing"
+        >
+          {connectionMode ? 'Connecting…' : 'Connect'}
+        </Button>
+
         {/* Search */}
         <div className="ml-auto flex items-center gap-1">
           <input
@@ -345,6 +401,15 @@ export function PdfViewer({ documentId }: Props) {
         </div>
       )}
 
+      {/* Connection-mode hint */}
+      {connectionMode && (
+        <div className="border-b border-sky-200 bg-sky-50 px-4 py-1.5 text-xs text-sky-700">
+          {pendingStart
+            ? 'Click the second point to finish the connection.'
+            : 'Click the first point of a connection (then a second). Click a line to select it. Edit details in the Connections panel.'}
+        </div>
+      )}
+
       {/* Scroll/pan area */}
       <div
         ref={scrollRef}
@@ -374,6 +439,12 @@ export function PdfViewer({ documentId }: Props) {
                 height={size.height}
                 highlights={highlights}
                 activeIndex={activeRectIndex}
+                connections={pageConnections}
+                selectedConnectionId={selectedConnectionId}
+                connectionMode={connectionMode}
+                pendingStart={pendingStart}
+                onPlacePoint={placePoint}
+                onSelectConnection={setSelectedConnection}
               />
             )}
           </div>
