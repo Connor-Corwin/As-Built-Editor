@@ -27,10 +27,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # Enables Pages on the repo (build type = GitHub Actions) if not already.
+      # Requires Pages to be enabled once in repo Settings → Pages →
+      # Source: GitHub Actions (the Actions token can't enable it itself).
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
