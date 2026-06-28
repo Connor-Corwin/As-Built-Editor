@@ -4,6 +4,7 @@ import { getProject, listDocuments } from '../../db/repository';
 import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../../components/Button';
 import { PdfViewer } from '../viewer/PdfViewer';
+import { PageThumbnails } from '../viewer/PageThumbnails';
 import { RackEditor } from '../rack/RackEditor';
 import { RightDrawer } from '../drawer/RightDrawer';
 
@@ -19,6 +20,10 @@ export function ProjectWorkspace({ projectId }: Props) {
   const toggleRightDrawer = useAppStore((s) => s.toggleRightDrawer);
   const activeView = useAppStore((s) => s.activeView);
   const currentRackId = useAppStore((s) => s.currentRackId);
+  const leftRailOpen = useAppStore((s) => s.leftRailOpen);
+  const toggleLeftRail = useAppStore((s) => s.toggleLeftRail);
+
+  const showThumbnails = activeView === 'pdf' && !!currentDocumentId;
 
   const project = useLiveQuery(() => getProject(projectId), [projectId]);
   const documents = useLiveQuery(
@@ -41,6 +46,11 @@ export function ProjectWorkspace({ projectId }: Props) {
         <Button variant="ghost" onClick={closeProject}>
           ← Projects
         </Button>
+        {showThumbnails && (
+          <Button variant="secondary" onClick={toggleLeftRail}>
+            {leftRailOpen ? 'Hide pages' : 'Pages'}
+          </Button>
+        )}
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-slate-800">
           {project?.name ?? 'Project'}
         </h1>
@@ -50,6 +60,13 @@ export function ProjectWorkspace({ projectId }: Props) {
       </header>
 
       <div className="flex min-h-0 flex-1">
+        {/* Left page-thumbnail rail */}
+        {showThumbnails && leftRailOpen && currentDocumentId && (
+          <aside className="w-36 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50">
+            <PageThumbnails documentId={currentDocumentId} />
+          </aside>
+        )}
+
         {/* Main work area: PDF viewer or rack editor */}
         <main className="min-w-0 flex-1">
           {activeView === 'rack' && currentRackId ? (
