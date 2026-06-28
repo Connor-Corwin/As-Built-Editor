@@ -2,6 +2,7 @@ import { db, newId } from './db';
 import type {
   Connection,
   PdfDocument,
+  Point,
   Project,
   Rack,
   RackEquipment,
@@ -231,4 +232,54 @@ export async function updateConnection(
 
 export async function deleteConnection(id: string): Promise<void> {
   await db.connections.delete(id);
+}
+
+// ---- Points (nodes of the editable copy) ----------------------------------
+
+export async function createPoint(
+  projectId: string,
+  data: Omit<Point, 'id' | 'projectId'>,
+): Promise<Point> {
+  const point: Point = { id: newId(), projectId, ...data };
+  await db.points.add(point);
+  await touchProject(projectId);
+  return point;
+}
+
+export function listPoints(projectId: string): Promise<Point[]> {
+  return db.points.where('projectId').equals(projectId).toArray();
+}
+
+export async function updatePoint(
+  id: string,
+  changes: Partial<Omit<Point, 'id' | 'projectId'>>,
+): Promise<void> {
+  await db.points.update(id, changes);
+}
+
+/** Delete a point and any connections that reference it. */
+export async function deletePoint(id: string): Promise<void> {
+  const point = await db.points.get(id);
+  await db.transaction('rw', [db.points, db.connections], async () => {
+    const conns = await db.connections.toArray();
+    const orphaned = conns
+      .filter((c) => c.fromPointId === id || c.toPointId === id)
+      .map((c) => c.id);
+    if (orphaned.length) await db.connections.bulkDelete(orphaned);
+    await db.points.delete(id);
+  });
+  if (point) await touchProject(point.projectId);
+}
+
+/** Create a connection between two existing points. */
+export async function connectPoints(
+  projectId: string,
+  fromPointId: string,
+  toPointId: string,
+): Promise<Connection> {
+  return createConnection(projectId, {
+    fromPointId,
+    toPointId,
+    signalType: 'video',
+  });
 }

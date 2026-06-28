@@ -3,6 +3,7 @@ import type {
   Annotation,
   Connection,
   PdfDocument,
+  Point,
   Project,
   Rack,
   RackEquipment,
@@ -20,6 +21,7 @@ export class AsBuiltDB extends Dexie {
   equipment!: Table<RackEquipment, string>;
   connections!: Table<Connection, string>;
   annotations!: Table<Annotation, string>;
+  points!: Table<Point, string>;
 
   constructor() {
     super('as-built-editor');
@@ -32,6 +34,10 @@ export class AsBuiltDB extends Dexie {
       equipment: 'id, rackId',
       connections: 'id, projectId',
       annotations: 'id, projectId, documentId',
+    });
+    // v2 adds points (nodes of the editable copy).
+    this.version(2).stores({
+      points: 'id, projectId, documentId',
     });
   }
 }

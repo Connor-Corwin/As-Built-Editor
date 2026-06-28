@@ -3,6 +3,7 @@ import type {
   Annotation,
   Connection,
   PdfDocument,
+  Point,
   Project,
   Rack,
   RackEquipment,
@@ -33,6 +34,7 @@ interface ProjectBundle {
   equipment: RackEquipment[];
   connections: Connection[];
   annotations: Annotation[];
+  points?: Point[];
 }
 
 // ---- blob helpers (work in browsers and in jsdom tests) -------------------
@@ -77,11 +79,12 @@ export async function exportProject(projectId: string): Promise<{
   const project = await db.projects.get(projectId);
   if (!project) throw new Error('Project not found.');
 
-  const [docs, racks, connections, annotations] = await Promise.all([
+  const [docs, racks, connections, annotations, points] = await Promise.all([
     db.documents.where('projectId').equals(projectId).toArray(),
     db.racks.where('projectId').equals(projectId).toArray(),
     db.connections.where('projectId').equals(projectId).toArray(),
     db.annotations.where('projectId').equals(projectId).toArray(),
+    db.points.where('projectId').equals(projectId).toArray(),
   ]);
 
   // Equipment is keyed by rack, not project; keep only this project's racks'.
@@ -107,6 +110,7 @@ export async function exportProject(projectId: string): Promise<{
     equipment: projectEquipment,
     connections,
     annotations,
+    points,
   };
 
   const safeName = project.name.replace(/[^a-z0-9-_ ]/gi, '').trim() || 'project';
@@ -142,6 +146,10 @@ export async function importProject(file: File | Blob): Promise<string> {
   bundle.racks.forEach((r) => rackIdMap.set(r.id, newId()));
   const equipmentIdMap = new Map<string, string>();
   bundle.equipment.forEach((e) => equipmentIdMap.set(e.id, newId()));
+  const docIdMap = new Map<string, string>();
+  bundle.documents.forEach((d) => docIdMap.set(d.id, newId()));
+  const pointIdMap = new Map<string, string>();
+  (bundle.points ?? []).forEach((p) => pointIdMap.set(p.id, newId()));
 
   const project: Project = {
     ...bundle.project,
@@ -154,11 +162,19 @@ export async function importProject(file: File | Blob): Promise<string> {
   const documents: PdfDocument[] = bundle.documents.map(
     ({ blobBase64, ...rest }) => ({
       ...rest,
-      id: newId(),
+      id: docIdMap.get(rest.id)!,
       projectId: newProjectId,
       blob: base64ToBlob(blobBase64),
     }),
   );
+
+  const points: Point[] = (bundle.points ?? []).map((p) => ({
+    ...p,
+    id: pointIdMap.get(p.id)!,
+    projectId: newProjectId,
+    documentId: docIdMap.get(p.documentId) ?? p.documentId,
+    rackId: p.rackId ? rackIdMap.get(p.rackId) ?? p.rackId : p.rackId,
+  }));
 
   const racks: Rack[] = bundle.racks.map((r) => ({
     ...r,
@@ -176,6 +192,15 @@ export async function importProject(file: File | Blob): Promise<string> {
     ...c,
     id: newId(),
     projectId: newProjectId,
+    fromPointId: c.fromPointId
+      ? pointIdMap.get(c.fromPointId) ?? c.fromPointId
+      : c.fromPointId,
+    toPointId: c.toPointId
+      ? pointIdMap.get(c.toPointId) ?? c.toPointId
+      : c.toPointId,
+    documentId: c.documentId
+      ? docIdMap.get(c.documentId) ?? c.documentId
+      : c.documentId,
     fromDeviceId: c.fromDeviceId
       ? equipmentIdMap.get(c.fromDeviceId) ?? c.fromDeviceId
       : c.fromDeviceId,
@@ -201,6 +226,7 @@ export async function importProject(file: File | Blob): Promise<string> {
       db.equipment,
       db.connections,
       db.annotations,
+      db.points,
     ],
     async () => {
       await db.projects.add(project);
@@ -209,6 +235,7 @@ export async function importProject(file: File | Blob): Promise<string> {
       if (equipment.length) await db.equipment.bulkAdd(equipment);
       if (connections.length) await db.connections.bulkAdd(connections);
       if (annotations.length) await db.annotations.bulkAdd(annotations);
+      if (points.length) await db.points.bulkAdd(points);
     },
   );
 

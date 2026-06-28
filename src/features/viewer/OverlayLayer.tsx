@@ -1,53 +1,71 @@
-import { Stage, Layer, Rect, Line, Circle, Text } from 'react-konva';
+import { Stage, Layer, Rect, Line, Circle, Text, Group } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { HighlightRect } from '../../lib/pdf';
-import type { Connection } from '../../db/models';
+import type { Connection, Point } from '../../db/models';
 import { SIGNAL_COLORS } from '../../lib/signalColors';
+import type { EditTool } from '../../store/useAppStore';
 
 interface Props {
   width: number;
   height: number;
-  /** Search-match rectangles to highlight, in CSS pixels at the page scale. */
   highlights?: HighlightRect[];
-  /** Index within `highlights` of the currently focused match. */
   activeIndex?: number;
-  /** Connections drawn on this page (have geometry). */
+  /** Points (nodes) on this page. */
+  points?: Point[];
+  /** Connections whose endpoints are points on this page. */
   connections?: Connection[];
+  editMode?: boolean;
+  editTool?: EditTool;
+  selectedPointId?: string | null;
   selectedConnectionId?: string | null;
-  /** True while placing/selecting connections (makes the overlay interactive). */
-  connectionMode?: boolean;
-  /** First point placed while drawing (normalized 0..1), awaiting the second. */
-  pendingStart?: { x: number; y: number } | null;
-  /** Background click at a normalized point (used to place connection ends). */
-  onPlacePoint?: (nx: number, ny: number) => void;
+  /** Pending source point while linking with the connect tool. */
+  connectFrom?: string | null;
+  onAddPoint?: (nx: number, ny: number) => void;
+  onMovePoint?: (id: string, nx: number, ny: number) => void;
+  onSelectPoint?: (id: string) => void;
+  onConnectClick?: (id: string) => void;
   onSelectConnection?: (id: string) => void;
+  onBackground?: () => void;
 }
 
+const POINT_BLUE = '#0284c7';
+const RACK_GREEN = '#059669';
+
 /**
- * Transparent canvas layered exactly over the rendered PDF page. Draws search
- * highlights and connection lines, and (in connection mode) handles clicks to
- * place/select connections — pixel-aligned with the drawing.
+ * Transparent canvas over the rendered PDF page. Renders the editable copy
+ * (points + connection links) and search highlights, and handles editing
+ * interactions when `editMode` is on. Coordinates are normalized (0..1).
  */
 export function OverlayLayer({
   width,
   height,
   highlights = [],
   activeIndex = -1,
+  points = [],
   connections = [],
+  editMode = false,
+  editTool = 'select',
+  selectedPointId = null,
   selectedConnectionId = null,
-  connectionMode = false,
-  pendingStart = null,
-  onPlacePoint,
+  connectFrom = null,
+  onAddPoint,
+  onMovePoint,
+  onSelectPoint,
+  onConnectClick,
   onSelectConnection,
+  onBackground,
 }: Props) {
+  const pos = new Map(points.map((p) => [p.id, { x: p.x * width, y: p.y * height }]));
+
   function handleStageClick(e: KonvaEventObject<MouseEvent | TouchEvent>) {
-    if (!connectionMode || !onPlacePoint) return;
     const stage = e.target.getStage();
-    // Only treat clicks on empty canvas (not on a line) as point placement.
-    if (!stage || e.target !== stage) return;
-    const pos = stage.getPointerPosition();
-    if (!pos) return;
-    onPlacePoint(pos.x / width, pos.y / height);
+    if (!stage || e.target !== stage) return; // only empty-canvas clicks
+    if (editMode && editTool === 'point' && onAddPoint) {
+      const p = stage.getPointerPosition();
+      if (p) onAddPoint(p.x / width, p.y / height);
+    } else {
+      onBackground?.();
+    }
   }
 
   return (
@@ -56,8 +74,8 @@ export function OverlayLayer({
       style={{
         width,
         height,
-        pointerEvents: connectionMode ? 'auto' : 'none',
-        cursor: connectionMode ? 'crosshair' : 'default',
+        pointerEvents: editMode ? 'auto' : 'none',
+        cursor: editMode && editTool === 'point' ? 'crosshair' : 'default',
       }}
     >
       <Stage
@@ -66,24 +84,18 @@ export function OverlayLayer({
         onClick={handleStageClick}
         onTap={handleStageClick}
       >
-        <Layer listening={connectionMode}>
-          {/* Connection lines */}
+        <Layer listening={editMode}>
+          {/* Connection links between points */}
           {connections.map((c) => {
-            if (
-              c.x1 == null ||
-              c.y1 == null ||
-              c.x2 == null ||
-              c.y2 == null
-            )
-              return null;
-            const color = SIGNAL_COLORS[c.signalType];
+            const a = c.fromPointId ? pos.get(c.fromPointId) : undefined;
+            const b = c.toPointId ? pos.get(c.toPointId) : undefined;
+            if (!a || !b) return null;
             const sel = c.id === selectedConnectionId;
-            const p = [c.x1 * width, c.y1 * height, c.x2 * width, c.y2 * height];
             return (
               <Line
                 key={c.id}
-                points={p}
-                stroke={color}
+                points={[a.x, a.y, b.x, b.y]}
+                stroke={SIGNAL_COLORS[c.signalType]}
                 strokeWidth={sel ? 4 : 2}
                 hitStrokeWidth={16}
                 opacity={0.9}
@@ -98,57 +110,75 @@ export function OverlayLayer({
               />
             );
           })}
-          {/* Endpoint dots (above the lines) */}
-          {connections.flatMap((c) => {
-            if (c.x1 == null || c.y1 == null || c.x2 == null || c.y2 == null)
-              return [];
-            const color = SIGNAL_COLORS[c.signalType];
-            const r = c.id === selectedConnectionId ? 5 : 3.5;
-            return [
-              <Circle
-                key={`${c.id}-a`}
-                x={c.x1 * width}
-                y={c.y1 * height}
-                radius={r}
-                fill={color}
-                listening={false}
-              />,
-              <Circle
-                key={`${c.id}-b`}
-                x={c.x2 * width}
-                y={c.y2 * height}
-                radius={r}
-                fill={color}
-                listening={false}
-              />,
-            ];
-          })}
-          {connections.map((c) =>
-            c.cableLabel && c.x1 != null && c.x2 != null && c.y1 != null && c.y2 != null ? (
+
+          {/* Cable labels at link midpoints */}
+          {connections.map((c) => {
+            const a = c.fromPointId ? pos.get(c.fromPointId) : undefined;
+            const b = c.toPointId ? pos.get(c.toPointId) : undefined;
+            if (!a || !b || !c.cableLabel) return null;
+            return (
               <Text
                 key={`${c.id}-lbl`}
-                x={((c.x1 + c.x2) / 2) * width + 4}
-                y={((c.y1 + c.y2) / 2) * height - 6}
+                x={(a.x + b.x) / 2 + 4}
+                y={(a.y + b.y) / 2 - 6}
                 text={c.cableLabel}
                 fontSize={11}
                 fill="#0f172a"
                 listening={false}
               />
-            ) : null,
-          )}
+            );
+          })}
 
-          {/* Pending first point while drawing */}
-          {pendingStart && (
-            <Circle
-              x={pendingStart.x * width}
-              y={pendingStart.y * height}
-              radius={5}
-              fill="#0ea5e9"
-              stroke="#0369a1"
-              strokeWidth={1}
-              listening={false}
-            />
-          )}
+          {/* Points */}
+          {points.map((p) => {
+            const pp = pos.get(p.id)!;
+            const isRack = !!p.rackId;
+            const sel = p.id === selectedPointId;
+            const isConnSrc = p.id === connectFrom;
+            const color = isRack ? RACK_GREEN : POINT_BLUE;
+            return (
+              <Group
+                key={p.id}
+                x={pp.x}
+                y={pp.y}
+                draggable={editMode && editTool === 'select'}
+                onDragEnd={(e) => {
+                  onMovePoint?.(
+                    p.id,
+                    e.target.x() / width,
+                    e.target.y() / height,
+                  );
+                }}
+                onClick={(e) => {
+                  e.cancelBubble = true;
+                  if (editTool === 'connect') onConnectClick?.(p.id);
+                  else onSelectPoint?.(p.id);
+                }}
+                onTap={(e) => {
+                  e.cancelBubble = true;
+                  if (editTool === 'connect') onConnectClick?.(p.id);
+                  else onSelectPoint?.(p.id);
+                }}
+              >
+                <Circle
+                  radius={sel || isConnSrc ? 9 : 7}
+                  fill={color}
+                  stroke={isConnSrc ? '#ea580c' : sel ? '#0f172a' : '#ffffff'}
+                  strokeWidth={isConnSrc || sel ? 2.5 : 1.5}
+                />
+                {p.label && (
+                  <Text
+                    x={11}
+                    y={-6}
+                    text={p.label}
+                    fontSize={12}
+                    fill="#0f172a"
+                    listening={false}
+                  />
+                )}
+              </Group>
+            );
+          })}
 
           {/* Search highlights */}
           {highlights.map((r, i) => (

@@ -9,6 +9,9 @@ export type ActiveView = 'pdf' | 'rack';
 /** Which tab is active in the right tools drawer. */
 export type DrawerTab = 'project' | 'drawings' | 'racks' | 'connections';
 
+/** Active tool while editing the plan overlay. */
+export type EditTool = 'select' | 'point' | 'connect';
+
 /**
  * Transient app/UI state. The single source of truth for the page transform
  * (scale + fit mode) lives here so the PDF canvas and the Konva overlay stay
@@ -35,8 +38,12 @@ interface AppState {
   drawerTab: DrawerTab;
   /** Whether the left page-thumbnail rail is open. */
   leftRailOpen: boolean;
-  /** When true, clicking the drawing draws/edits connection lines. */
-  connectionMode: boolean;
+  /** When true, the plan overlay is editable (place/move points, link them). */
+  editMode: boolean;
+  /** Active edit tool. */
+  editTool: EditTool;
+  /** Currently selected point. */
+  selectedPointId: string | null;
   /** Currently selected connection (for editing/highlighting). */
   selectedConnectionId: string | null;
 
@@ -53,8 +60,10 @@ interface AppState {
   setRightDrawerOpen: (open: boolean) => void;
   setDrawerTab: (tab: DrawerTab) => void;
   toggleLeftRail: () => void;
-  toggleConnectionMode: () => void;
-  setConnectionMode: (on: boolean) => void;
+  toggleEditMode: () => void;
+  setEditMode: (on: boolean) => void;
+  setEditTool: (tool: EditTool) => void;
+  setSelectedPoint: (id: string | null) => void;
   setSelectedConnection: (id: string | null) => void;
 }
 
@@ -73,7 +82,9 @@ export const useAppStore = create<AppState>((set) => ({
   rightDrawerOpen: true,
   drawerTab: 'drawings',
   leftRailOpen: true,
-  connectionMode: false,
+  editMode: false,
+  editTool: 'select',
+  selectedPointId: null,
   selectedConnectionId: null,
 
   openProject: (projectId) =>
@@ -86,7 +97,9 @@ export const useAppStore = create<AppState>((set) => ({
       scale: 1,
       fitMode: 'fit',
       drawerTab: 'drawings',
-      connectionMode: false,
+      editMode: false,
+      editTool: 'select',
+      selectedPointId: null,
       selectedConnectionId: null,
     }),
   closeProject: () =>
@@ -115,11 +128,14 @@ export const useAppStore = create<AppState>((set) => ({
   setRightDrawerOpen: (rightDrawerOpen) => set({ rightDrawerOpen }),
   setDrawerTab: (drawerTab) => set({ drawerTab, rightDrawerOpen: true }),
   toggleLeftRail: () => set((s) => ({ leftRailOpen: !s.leftRailOpen })),
-  toggleConnectionMode: () =>
-    set((s) => ({ connectionMode: !s.connectionMode })),
-  setConnectionMode: (connectionMode) => set({ connectionMode }),
+  toggleEditMode: () =>
+    set((s) => ({ editMode: !s.editMode, editTool: 'select' })),
+  setEditMode: (editMode) => set({ editMode }),
+  setEditTool: (editTool) => set({ editTool }),
+  setSelectedPoint: (selectedPointId) =>
+    set({ selectedPointId, selectedConnectionId: null }),
   setSelectedConnection: (selectedConnectionId) =>
-    set({ selectedConnectionId }),
+    set({ selectedConnectionId, selectedPointId: null }),
 }));
 
 export { MIN_SCALE, MAX_SCALE };

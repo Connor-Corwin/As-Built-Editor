@@ -16,7 +16,7 @@ describe('csv', () => {
       {
         id: '1',
         projectId: 'p',
-        fromDeviceId: 'dev1',
+        fromPointId: 'pt1',
         fromPort: 'OUT 1',
         toLabel: 'Display A',
         toPort: 'HDMI 1',
@@ -25,7 +25,7 @@ describe('csv', () => {
       },
     ];
     const csv = connectionsToCsv(conns, (id) =>
-      id === 'dev1' ? 'DSP' : undefined,
+      id === 'pt1' ? 'DSP' : undefined,
     );
     expect(csv.split('\r\n')[0]).toContain('From Device');
 

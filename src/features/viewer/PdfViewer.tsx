@@ -10,7 +10,13 @@ import {
   type HighlightRect,
   type SearchHit,
 } from '../../lib/pdf';
-import { createConnection, listConnections } from '../../db/repository';
+import {
+  connectPoints,
+  createPoint,
+  listConnections,
+  listPoints,
+  updatePoint,
+} from '../../db/repository';
 import { Button } from '../../components/Button';
 import { usePdfDocument } from './usePdfDocument';
 import { OverlayLayer } from './OverlayLayer';
@@ -55,10 +61,15 @@ export function PdfViewer({ documentId }: Props) {
   const setScale = useAppStore((s) => s.setScale);
   const setFitMode = useAppStore((s) => s.setFitMode);
   const projectId = useAppStore((s) => s.currentProjectId);
-  const connectionMode = useAppStore((s) => s.connectionMode);
-  const toggleConnectionMode = useAppStore((s) => s.toggleConnectionMode);
+  const editMode = useAppStore((s) => s.editMode);
+  const toggleEditMode = useAppStore((s) => s.toggleEditMode);
+  const editTool = useAppStore((s) => s.editTool);
+  const setEditTool = useAppStore((s) => s.setEditTool);
+  const selectedPointId = useAppStore((s) => s.selectedPointId);
+  const setSelectedPoint = useAppStore((s) => s.setSelectedPoint);
   const selectedConnectionId = useAppStore((s) => s.selectedConnectionId);
   const setSelectedConnection = useAppStore((s) => s.setSelectedConnection);
+  const setDrawerTab = useAppStore((s) => s.setDrawerTab);
 
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -75,47 +86,69 @@ export function PdfViewer({ documentId }: Props) {
   // Set when a match should be scrolled into view after the next render.
   const wantScrollRef = useRef(false);
 
-  // Connection drawing: first placed point awaiting its pair.
-  const [pendingStart, setPendingStart] = useState<{ x: number; y: number } | null>(
-    null,
-  );
+  // Connect tool: first point chosen, awaiting the second.
+  const [connectFrom, setConnectFrom] = useState<string | null>(null);
 
   const numPages = pdf?.numPages ?? 0;
   const pageNum = Math.min(Math.max(1, page), numPages || 1);
 
-  // Connections drawn on the current document + page.
+  // Points + connections of the editable copy, scoped to this page.
+  const points = useLiveQuery(
+    () => (projectId ? listPoints(projectId) : Promise.resolve([])),
+    [projectId],
+    [],
+  );
   const connections = useLiveQuery(
     () => (projectId ? listConnections(projectId) : Promise.resolve([])),
     [projectId],
     [],
   );
+  const pagePoints = points.filter(
+    (p) => p.documentId === documentId && p.page === pageNum,
+  );
+  const pagePointIds = new Set(pagePoints.map((p) => p.id));
   const pageConnections = connections.filter(
-    (c) => c.documentId === documentId && c.page === pageNum && c.x1 != null,
+    (c) =>
+      c.fromPointId &&
+      c.toPointId &&
+      pagePointIds.has(c.fromPointId) &&
+      pagePointIds.has(c.toPointId),
   );
 
-  async function placePoint(nx: number, ny: number) {
+  async function addPoint(nx: number, ny: number) {
     if (!projectId) return;
-    if (!pendingStart) {
-      setPendingStart({ x: nx, y: ny });
-      return;
-    }
-    const conn = await createConnection(projectId, {
-      signalType: 'video',
+    const p = await createPoint(projectId, {
       documentId,
       page: pageNum,
-      x1: pendingStart.x,
-      y1: pendingStart.y,
-      x2: nx,
-      y2: ny,
+      x: nx,
+      y: ny,
     });
-    setPendingStart(null);
-    setSelectedConnection(conn.id);
+    setSelectedPoint(p.id);
+    setDrawerTab('connections');
   }
 
-  // Leaving connection mode clears any half-drawn line.
+  function movePoint(id: string, nx: number, ny: number) {
+    updatePoint(id, { x: nx, y: ny });
+  }
+
+  async function connectClick(pointId: string) {
+    if (!projectId) return;
+    if (!connectFrom) {
+      setConnectFrom(pointId);
+      return;
+    }
+    if (connectFrom !== pointId) {
+      const conn = await connectPoints(projectId, connectFrom, pointId);
+      setSelectedConnection(conn.id);
+      setDrawerTab('connections');
+    }
+    setConnectFrom(null);
+  }
+
+  // Leaving edit mode (or switching tool away from connect) clears pending link.
   useEffect(() => {
-    if (!connectionMode) setPendingStart(null);
-  }, [connectionMode]);
+    if (!editMode || editTool !== 'connect') setConnectFrom(null);
+  }, [editMode, editTool]);
 
   // Which highlight rect on the current page is the active match. Highlights and
   // hits are both enumerated in text-item order, so the active hit's position
@@ -342,15 +375,42 @@ export function PdfViewer({ documentId }: Props) {
           </Button>
         </div>
 
-        {/* Connections */}
-        <Button
-          variant={connectionMode ? 'primary' : 'secondary'}
-          onClick={toggleConnectionMode}
-          disabled={zoomDisabled}
-          title="Draw connection lines on the drawing"
-        >
-          {connectionMode ? 'Connecting…' : 'Connect'}
-        </Button>
+        {/* Edit plan (points + links) */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant={editMode ? 'primary' : 'secondary'}
+            onClick={toggleEditMode}
+            disabled={zoomDisabled}
+            title="Edit the plan: place points, move/label them, and link them"
+          >
+            {editMode ? 'Editing' : 'Edit'}
+          </Button>
+          {editMode && (
+            <>
+              <Button
+                variant={editTool === 'select' ? 'primary' : 'secondary'}
+                onClick={() => setEditTool('select')}
+                title="Select / move points"
+              >
+                Select
+              </Button>
+              <Button
+                variant={editTool === 'point' ? 'primary' : 'secondary'}
+                onClick={() => setEditTool('point')}
+                title="Add points"
+              >
+                + Point
+              </Button>
+              <Button
+                variant={editTool === 'connect' ? 'primary' : 'secondary'}
+                onClick={() => setEditTool('connect')}
+                title="Link two points"
+              >
+                Connect
+              </Button>
+            </>
+          )}
+        </div>
 
         {/* Search */}
         <div className="ml-auto flex items-center gap-1">
@@ -401,19 +461,26 @@ export function PdfViewer({ documentId }: Props) {
         </div>
       )}
 
-      {/* Connection-mode hint */}
-      {connectionMode && (
+      {/* Edit-mode hint */}
+      {editMode && (
         <div className="border-b border-sky-200 bg-sky-50 px-4 py-1.5 text-xs text-sky-700">
-          {pendingStart
-            ? 'Click the second point to finish the connection.'
-            : 'Click the first point of a connection (then a second). Click a line to select it. Edit details in the Connections panel.'}
+          {editTool === 'point' &&
+            'Click on the plan to add points. Switch to Select to move/label them.'}
+          {editTool === 'select' &&
+            'Click a point to select (edit/label/delete in the Connections panel); drag to move.'}
+          {editTool === 'connect' &&
+            (connectFrom
+              ? 'Click the second point to create the link.'
+              : 'Click the first point, then a second, to link them.')}
         </div>
       )}
 
       {/* Scroll/pan area */}
       <div
         ref={scrollRef}
-        className="relative flex-1 overflow-auto bg-slate-200 p-6"
+        className={`relative flex-1 overflow-auto bg-slate-200 p-6 ${
+          editMode && editTool === 'select' ? 'select-none' : ''
+        }`}
         // Allow one-finger panning but let us handle two-finger pinch.
         style={{ touchAction: 'pan-x pan-y' }}
       >
@@ -439,12 +506,22 @@ export function PdfViewer({ documentId }: Props) {
                 height={size.height}
                 highlights={highlights}
                 activeIndex={activeRectIndex}
+                points={pagePoints}
                 connections={pageConnections}
+                editMode={editMode}
+                editTool={editTool}
+                selectedPointId={selectedPointId}
                 selectedConnectionId={selectedConnectionId}
-                connectionMode={connectionMode}
-                pendingStart={pendingStart}
-                onPlacePoint={placePoint}
+                connectFrom={connectFrom}
+                onAddPoint={addPoint}
+                onMovePoint={movePoint}
+                onSelectPoint={setSelectedPoint}
+                onConnectClick={connectClick}
                 onSelectConnection={setSelectedConnection}
+                onBackground={() => {
+                  setSelectedPoint(null);
+                  setSelectedConnection(null);
+                }}
               />
             )}
           </div>

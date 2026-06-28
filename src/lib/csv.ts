@@ -21,17 +21,17 @@ function escapeCell(value: string): string {
   return value;
 }
 
-/** Resolve an endpoint's display name (rack device label or free text). */
-export type DeviceNameResolver = (deviceId?: string) => string | undefined;
+/** Resolve a point's display label by id. */
+export type PointNameResolver = (pointId?: string) => string | undefined;
 
 export function connectionsToCsv(
   connections: Connection[],
-  resolveDevice: DeviceNameResolver,
+  resolvePoint: PointNameResolver,
 ): string {
   const lines = [HEADERS.join(',')];
   for (const c of connections) {
-    const from = resolveDevice(c.fromDeviceId) ?? c.fromLabel ?? '';
-    const to = resolveDevice(c.toDeviceId) ?? c.toLabel ?? '';
+    const from = resolvePoint(c.fromPointId) ?? c.fromLabel ?? '';
+    const to = resolvePoint(c.toPointId) ?? c.toLabel ?? '';
     lines.push(
       [
         from,
